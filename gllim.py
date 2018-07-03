@@ -165,6 +165,23 @@ class GLLIM:
 
         return theta, r, log_like
 
+
+    def emgm_init(self,t,y,max_iter=100,joint=True):
+        """Initialise posteriors with GMM. joint switches between joint (t,y) or only t"""
+        print('\nRunning: Gaussian Mixture Models')
+
+        gm = GaussianMixture(n_components=self.K, max_iter=max_iter,
+                             verbose=self.verbose)
+        if joint:
+            X = np.concatenate((t, y)).T
+        else:
+            X = t
+        gm.fit(X)
+        r  = gm.predict_proba(X)
+        return r
+
+
+
     def _initialization(self, t, y, theta, cstr, r):
         if self.verbose: print('\n  *** EM Initialization ***')
 
@@ -186,18 +203,7 @@ class GLLIM:
             return r, empty_cluster_indeces, muw, Sw
 
         if not r:
-            # Initialise posteriors with GMM on joint observed data
-            print('\nRunning: Gaussian Mixture Models')
-            # if True:
-            gm = GaussianMixture(n_components=self.K, max_iter=100,
-            verbose=self.verbose)
-            X = np.concatenate((t,y)).T
-            gm.fit(X)
-            r = gm.predict_proba(X)
-            # else:
-            #     import scipy.io
-            #     mat = scipy.io.loadmat('../the_GLLiM_toolbox_matlab/tmp/r.mat')
-            #     r = mat['r']
+            r = self.emgm_init(t,y,max_iter=100,joint=True)
 
         if self.Lw == 0:
             Sw = np.zeros(0)
@@ -528,7 +534,7 @@ class GLLIM:
         empty_cluster_indeces = [k for k in empty_cluster_indeces if not k in indeces_to_remove]
         if not empty_cluster_indeces:
             if self.verbose: print('*** re-initialization')
-            r = emgm(t, y, self.K, 2, self.verbose)
+            r = self.emgm_init(t, y, max_iter=2)
             empty_cluster_indeces = list(range(r.shape[1]))
         else:
             r = r[:,empty_cluster_indeces]
