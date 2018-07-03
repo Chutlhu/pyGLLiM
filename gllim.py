@@ -123,7 +123,7 @@ class GLLIM:
             raise ValueError("Dimensions do not agree")
 
         # EM INITIALIZATION
-        r, ec, μw, Sw = self._initialization(t, y, self.theta, cstr, self.r)
+        r, ec, muw, Sw = self._initialization(t, y, self.theta, cstr, self.r)
 
         # EM ITERATIONS
         if self.verbose:
@@ -137,12 +137,12 @@ class GLLIM:
         for it in bar(range(max_iter)):
 
             # MAXIMIZATION STEP
-            theta = self._maximization(t, y, r, cstr, μw, Sw)
+            theta = self._maximization(t, y, r, cstr, muw, Sw)
 
             # EXPECTATION STEP
             r, log_like[it], ec = self._expectation_z(t,y,theta)
             theta, cstr = self._remove_empty_clusters(theta,cstr,ec)
-            μw, Sw = self._expectation_w(t, y, theta)
+            muw, Sw = self._expectation_w(t, y, theta)
 
             if it > 2:
                 delta_log_like_total = np.max(log_like[0:it]) - np.min(log_like[0:it])
@@ -181,9 +181,9 @@ class GLLIM:
         if not [allnans(theta[key]) for key in self.theta_keys]:
             r, log_like, empty_cluster_indeces = self._expectation_z(t, y, theta)
             theta, cstr = self._remove_empty_clusters(theta, cstr, empty_cluster_indeces)
-            μw, Sw = self._expectation_w(t, y, theta)
+            muw, Sw = self._expectation_w(t, y, theta)
 
-            return r, empty_cluster_indeces, μw, Sw
+            return r, empty_cluster_indeces, muw, Sw
 
         if not r:
             # Initialise posteriors with GMM on joint observed data
@@ -201,7 +201,7 @@ class GLLIM:
 
         if self.Lw == 0:
             Sw = np.zeros(0)
-            μw = np.zeros(0)
+            muw = np.zeros(0)
             empty_cluster_indeces = []
         else:
             # Start by running an M-step without hidden variables (partial
@@ -251,17 +251,17 @@ class GLLIM:
 
             r, log_like, empty_cluster_indeces = self._expectation_z(t,y,theta)
             theta, cstr = self._remove_empty_clusters(theta, cstr, empty_cluster_indeces)
-            μw, Sw = self._expectation_w(t,y,theta)
+            muw, Sw = self._expectation_w(t,y,theta)
 
-        return r, empty_cluster_indeces, μw, Sw
+        return r, empty_cluster_indeces, muw, Sw
 
-    def _maximization(self, t, y, r, cstr, μw=np.zeros(0), Sw=np.zeros(0)):
+    def _maximization(self, t, y, r, cstr, muw=np.zeros(0), Sw=np.zeros(0)):
         if self.verbose: print('Maximization step')
 
         D, N = y.shape
         Lt, N = t.shape
         K = r.shape[1]
-        Lw = μw.shape[0]
+        Lw = muw.shape[0]
         L = Lt + Lw
 
         theta = {
@@ -309,10 +309,10 @@ class GLLIM:
                     theta['Gamma'][0:Lt,0:Lt,k] = cstr['Gammat'][:,:,k]
                 if cstr_type_gamma == 'diagonal':
                     gamma2 = np.sum(diffGamma**2, 1)/rk_bar[k] #Ltx1
-                    theta['Gamma'][0:Lt,0:Lt,k] = diag(gamma2) # LtxLt
+                    theta['Gamma'][0:Lt,0:Lt,k] = np.diag(gamma2) # LtxLt
                 if cstr_type_gamma == 'isotropic':
                     gamma2 = np.sum(diffGamma**2, 1)/rk_bar[k] #Ltx1
-                    theta['Gamma'][0:Lt,0:Lt,k] = np.mean(gamma2)*eye(Lt) # LtxLt
+                    theta['Gamma'][0:Lt,0:Lt,k] = np.mean(gamma2)*np.eye(Lt) # LtxLt
                 if cstr_type_gamma == 'equal_det':
                     theta['Gamma'][0:Lt,0:Lt,k] = diffGamma*diffGamma/rk_bar[k] # LtxLt
 
@@ -322,7 +322,7 @@ class GLLIM:
             if Lw > 0:
                 x = np.concatenate(
                         (t,
-                        np.reshape(μw[:,:,k], (Lw, N), order = 'F'))) # LxN
+                        np.reshape(muw[:,:,k], (Lw, N), order = 'F'))) # LxN
                 Skx = np.zeros((L,L)) # LxL
                 Skx[Lt:L,Lt:L] = Sw[:,:,k]
             else:
@@ -498,18 +498,18 @@ class GLLIM:
         bar = progressbar.ProgressBar(widgets=['k = ', progressbar.SimpleProgress(), progressbar.Bar()])
         for k in bar(range(self.K)):
 
-            μyk = theta['b'][:,k] # Dx1
+            muyk = theta['b'][:,k] # Dx1
             covyk = np.reshape(theta['Sigma'][:,:,k], (self.D, self.D), order = 'F') #DxD
             if self.Lt > 0:
                 Atk = np.reshape(theta['A'][:,0:self.Lt,k], (self.D, self.Lt), order = 'F') #DxLt
-                μyk = μyk[:,None] + np.matmul(Atk, t) #DxN
+                muyk = muyk[:,None] + np.matmul(Atk, t) #DxN
             if self.Lw > 0:
                 Awk = np.reshape(theta['A'][:,self.Lt:self.L,k], (self.D, self.Lw), order = 'F') #DxLw
                 Gammawk = np.reshape(theta['Gamma'][self.Lt:self.L, self.Lt:self.L,k], (self.Lw, self.Lw), order = 'F') #LwxLw
                 cwk = theta['c'][self.Lt:self.L,k] # Lwx1
                 covyk = covyk + np.matmul(np.matmul(Awk, Gammawk), Awk.T) # DxD
-                μyk = μyk + np.matmul(Awk, cwk)[:,None] #DxN
-            logr[:,k] = np.log(theta['pi'][k]) + (log_gauss_pdf(y, μyk, covyk)) #Nx1
+                muyk = muyk + np.matmul(Awk, cwk)[:,None] #DxN
+            logr[:,k] = np.log(theta['pi'][k]) + (log_gauss_pdf(y, muyk, covyk)) #Nx1
             if self.Lt > 0:
                 logr[:,k] += log_gauss_pdf(t, theta['c'][0:self.Lt,k], theta['Gamma'][0:self.Lt, 0:self.Lt,k])
 
@@ -572,13 +572,13 @@ class GLLIM:
 
     def _expectation_w(self, t, y, theta):
         if self.Lw == 0:
-            μw = np.zeros(0)
+            muw = np.zeros(0)
             Sw = np.zeros(0)
-            return μw, Sw
+            return muw, Sw
 
         if self.verbose: print('Expectation W step')
 
-        μw = np.zeros((self.Lw, self.N, self.K))
+        muw = np.zeros((self.Lw, self.N, self.K))
         Sw = np.zeros((self.Lw, self.Lw, self.K))
 
         bar = progressbar.ProgressBar(widgets=['k = ', progressbar.SimpleProgress(), progressbar.Bar()])
@@ -605,12 +605,12 @@ class GLLIM:
                 Atkt = 0
 
             Sw[:,:,k] = np.linalg.inv(invSwk)
-            μw[:,:,k] = np.dot(
+            muw[:,:,k] = np.dot(
                             np.linalg.inv(np.dot(invSwk, Gammawk)),
                             np.dot(np.dot(np.dot(Gammawk,Awk.T),invSigmak),
                             y - Atkt - bk) + cwk
                         )
-        return μw, Sw
+        return muw, Sw
 
 # END GLLiM CLASS
 
@@ -621,18 +621,18 @@ class GLLIM:
 def check_input(X,Y):
     return X.shape[1]==Y.shape[1]
 
-def log_gauss_pdf(X, μ, Sigma):
+def log_gauss_pdf(X, mu, Sigma):
     '''
     Compute the logarithm of the normal distribution applied in X given the
-    mean μ and covariance Sigma.
+    mean mu and covariance Sigma.
     '''
     (D, N) = X.shape
-    if len(μ.shape) < len(X.shape):
+    if len(mu.shape) < len(X.shape):
         # Restore misisng dimension
-        μ1 = np.zeros((μ.shape[0],1))
-        μ1[:,0] = μ
-        μ = μ1
-    X = X - μ # DxN
+        mu1 = np.zeros((mu.shape[0],1))
+        mu1[:,0] = mu
+        mu = mu1
+    X = X - mu # DxN
     try:
         U = np.linalg.cholesky(Sigma) # DxD
     except:
@@ -720,15 +720,15 @@ def gllim_forward_densities(x, theta, y_samples=[], verbose=1):
       - psi.alpha (1xK)     Gaussian weights
     '''
 
-    L = shape(x)[0]
-    (D,K) = shape(theta['b'])
+    L = x.shape[0]
+    D,K = theta['b'].shape
 
     if verbose:
         print('Compute FORWARD conditional density parameters')
 
     # Parameters to estimate:
-    μ = np.empty((D,K)) # conditional means
-    log_α = np.zeros((1,K)) # conditional log-weights, log(p(Z=k|x;theta))
+    mu = np.empty((D,K)) # conditional means
+    log_alpha = np.zeros((1,K)) # conditional log-weights, log(p(Z=k|x;theta))
     p_y_given_xktheta = np.zeros(x, K) # Probability p(y|x,Z=k;theta)
 
     # Estimation
@@ -740,36 +740,36 @@ def gllim_forward_densities(x, theta, y_samples=[], verbose=1):
         Ak = np.reshape(theta['A'][:,:,k], (D, L), order = 'F') # DxL
         bk = np.reshape(theta['b'][:,:,k], (D, 1), order = 'F') # Dx1
 
-        if verbose > 1: print('    μ')
-        μ[:,k] = np.matmul(Ak, x) + bk # Dx1
+        if verbose > 1: print('    mu')
+        mu[:,k] = np.matmul(Ak, x) + bk # Dx1
 
-        if verbose > 1: print('    log_α')
-        log_α[k] = np.log(theta['pi'][k]) + log_gauss_pdf(x, theta['pi'][:,k], theta['Gamma'][:,:,k])
+        if verbose > 1: print('    log_alpha')
+        log_alpha[k] = np.log(theta['pi'][k]) + log_gauss_pdf(x, theta['pi'][:,k], theta['Gamma'][:,:,k])
 
-        if not y.size == 0:
+        if not y_samples.size == 0:
             if verbose > 1:
                 print('    p(Y=y| X=x, Z=%d; theta)'%(k))
-            p_y_given_xktheta = log_α[k] + log_gauss_pdf(y_samples, μ[:,k], theta['Sigma'][:,:,k]) # Nx1
+            p_y_given_xktheta = log_alpha[k] + log_gauss_pdf(y_samples, mu[:,k], theta['Sigma'][:,:,k]) # Nx1
 
         if verbose > 1:
             print('\n')
 
     # Normalization
-    log_α -= log_sum_exp(log_α)
-    α = np.exp(log_α)
+    log_alpha -= log_sum_exp(log_alpha)
+    alpha = np.exp(log_alpha)
 
     if not y_samples.size == 0:
-        y_density = np.sum(p_y_given_xktheta * α)
+        y_density = np.sum(p_y_given_xktheta * alpha)
     else:
         y_density = []
 
-    ψ = {}
-    ψ['S'] = theta['Sigma']
-    ψ['μ'] = μ
-    ψ['α'] = α
-    return y_density, ψ
+    psi = {}
+    psi['S'] = theta['Sigma']
+    psi['mu'] = mu
+    psi['alpha'] = alpha
+    return y_density, psi
 
-def gllim_inverse_densities(y, theta, χ=[], x_samples=[], verbose=1):
+def gllim_inverse_densities(y, theta, chi=[], x_samples=[], verbose=1):
 
     '''
     Inverse Conditional Density from Gllim Parameters
@@ -807,16 +807,16 @@ def gllim_inverse_densities(y, theta, χ=[], x_samples=[], verbose=1):
         print('Compute INVERSE conditional density parameters')
 
     # Pre-computation
-    if not χ:
-        χ = np.ones(y.shape)
+    if not chi:
+        chi = np.ones(y.shape)
     log_2piL = L*np.log(2*np.pi)
-    sqrtχbar = np.sqrt(np.sum(χ, 1)) # Dx1
+    sqrtchibar = np.sqrt(np.sum(chi, 1)) # Dx1
 
     # Parameters to estimate
-    μ = np.empty((L,K)) # conditional means
+    mu = np.empty((L,K)) # conditional means
     S = np.empty((L,L,K)) # Conditional covariance matrices
-    log_α = np.zeros((1,K)) # conditional log-weights, log(p(Z=k|y;theta))
-    p_x_given_yktheta = np.zeros(x, K) # Probability p(x|y,Z=k;theta)
+    log_alpha = np.zeros((1,K)) # conditional log-weights, log(p(Z=k|y;theta))
+    p_x_given_yktheta = np.zeros(x_samples.shape[1], K) # Probability p(x|y,Z=k;theta)
 
     # Estimation
     for k in range(K):
@@ -831,35 +831,35 @@ def gllim_inverse_densities(y, theta, χ=[], x_samples=[], verbose=1):
         ck = np.reshape(theta['c'][:,k], (L, 1), order = 'F') # Lx1
         Gammak = np.reshape(theta['Gamma'][:,:,k], (L, L), order = 'F') # LxL
         invGammak = np.linalg.inv(Gammak)
-        weighted_Ak = Ak * sqrtχbar
+        weighted_Ak = Ak * sqrtchibar
 
         if verbose > 1: print('    - invSk')
         invSk = np.linalg.inv(Gammak) + np.matmul( np.matmul(weighted_Ak.T, invSigmak), weighted_Ak)
         S[:,:,k] = np.linalg.inv(invSk)
         Sk = np.reshape(S[:,:,k], (L,L), order = 'F')
 
-        if verbose > 1: print('    - μk')
-        tmp_diff = χ * (y - bk) # DxT
-        μ[:,k] = np.matmul(Sk,
+        if verbose > 1: print('    - muk')
+        tmp_diff = chi * (y - bk) # DxT
+        mu[:,k] = np.matmul(Sk,
                     (np.matmul(np.matmul(Ak.T, invSigmak), np.sum(diff, axis=1)) \
                     + np.matmul(invGammak, ck)))
-        μk = np.reshape(μ[:,k], (L,1), order = 'F') # Lx1
+        muk = np.reshape(mu[:,k], (L,1), order = 'F') # Lx1
 
-        if verbose > 1: print('    - log(αk)')
-        log_α[k] = np.log(np.linalg.det(invSk)) + np.log(np.linalg.det(Gammak)) \
+        if verbose > 1: print('    - log(alphak)')
+        log_alpha[k] = np.log(np.linalg.det(invSk)) + np.log(np.linalg.det(Gammak)) \
                     + np.matmul(np.matmul(ck.T, invGammak), ck) \
-                    - np.matmul(np.matmul(μk.T, invSk), μk)
+                    - np.matmul(np.matmul(muk.T, invSk), muk)
         for t in range(T):
             if verbose > 1: print('    - - t = %d'%(t))
-            nonzero_indeces = [χ[:,t] == 1] # indices of the D' non-missing data in y_t
-            dχ = y[nonzero_indeces, t] - bk[nonzero_indeces] # D'x1
-            iSχ = invSigmak[nonzero_indeces, nonzero_indeces] # D'xD'
-            log_α[k] = log_α[k]+np.matmul(np.matmul(dχ.T, iSχ), dχ.T)
+            nonzero_indeces = [chi[:,t] == 1] # indices of the D' non-missing data in y_t
+            dchi = y[nonzero_indeces, t] - bk[nonzero_indeces] # D'x1
+            iSchi = invSigmak[nonzero_indeces, nonzero_indeces] # D'xD'
+            log_alpha[k] = log_alpha[k]+np.matmul(np.matmul(dchi.T, iSchi), dchi.T)
         # end for t
 
         if not x_samples:
             if verbose > 1: print('    - p(X = x | Y = y, Z = %d; theta)\n'%(k))
-            diff = x_samples - μk
+            diff = x_samples - muk
             p_x_given_yktheta[:,k] = (np.log(np.linalg.det(invSk))\
                                   - log_2piL \
                                   - (np.matmul(diff.T, invSk).T * diff).sum() \
@@ -867,19 +867,19 @@ def gllim_inverse_densities(y, theta, χ=[], x_samples=[], verbose=1):
     # end for k
 
     # Normalization
-    log_α -= log_sum_exp(log_α)
-    α = np.exp(log_α)
+    log_alpha -= log_sum_exp(log_alpha)
+    alpha = np.exp(log_alpha)
 
     if not x_samples.size == 0:
-        x_density = np.sum(p_x_given_yktheta * α)
+        x_density = np.sum(p_x_given_yktheta * alpha)
     else:
         x_density = []
 
-    ψ = {}
-    ψ['S'] = theta['S']
-    ψ['μ'] = μ
-    ψ['α'] = α
-    return x_density, ψ
+    psi = {}
+    psi['S'] = theta['S']
+    psi['mu'] = mu
+    psi['alpha'] = alpha
+    return x_density, psi
 
 def gllim_inverse_map(y, theta, verbose=1):
 
@@ -912,7 +912,7 @@ def gllim_inverse_map(y, theta, verbose=1):
 
     # parameters to estimate:
     proj = np.empty((L, N, K)) # K projection to X space
-    log_α = np.zeros((N,K)) # conditional log-weights, log(p(Z-k|y,theta))
+    log_alpha = np.zeros((N,K)) # conditional log-weights, log(p(Z-k|y,theta))
 
     # estimation:
     for k in range(K):
@@ -949,19 +949,19 @@ def gllim_inverse_map(y, theta, verbose=1):
         if verbose > 1: print('    - projections')
         proj[:,:,k] = np.matmul(Aks, y) + bks   # LxN
 
-        if verbose > 1: print('    - log(α)')
-        log_α[:,k] = np.log(theta['pi'][k]) + log_gauss_pdf(y, cks, Gammaks) # Nx1S
+        if verbose > 1: print('    - log(alpha)')
+        log_alpha[:,k] = np.log(theta['pi'][k]) + log_gauss_pdf(y, cks, Gammaks) # Nx1S
     # Normalization
-    log_α = log_α - log_sum_exp(log_α,1)[:,None] # NxK
+    log_alpha = log_alpha - log_sum_exp(log_alpha,1)[:,None] # NxK
 
     # Results
-    α = np.exp(log_α) # NxK
+    alpha = np.exp(log_alpha) # NxK
     x_exp = np.reshape(np.sum(
-        np.reshape(α, (1,N,K), order='F') * proj, axis = 2),
+        np.reshape(alpha, (1,N,K), order='F') * proj, axis = 2),
         (L,N), order='F') # LxN
 
     posterior_means = x_exp
-    posterior_GMMs_weight = α
+    posterior_GMMs_weight = alpha
 
     return posterior_means, posterior_GMMs_weight
 
@@ -998,7 +998,7 @@ def gllim_forward_map(x, theta, verbose=1):
 
     # Parameters to estimate
     proj = np.empty((L,N,K)) # K projection to X space
-    log_α = np.zeros((N,K)) # Coditional log-weights , log(p(Z=k|y;theta))
+    log_alpha = np.zeros((N,K)) # Coditional log-weights , log(p(Z=k|y;theta))
 
 
     # Estimation
@@ -1012,20 +1012,20 @@ def gllim_forward_map(x, theta, verbose=1):
         if verbose > 1: print('    - projections')
         proj[:,:,k] = np.matmul(Ak, x) + bk   # LxN
 
-        if verbose > 1: print('    - log(α)\n')
-        log_α[:,k] = np.log(theta['pi'][k] + log_gauss_pdf(x, theta['xk'][:,k], theta['Gammaks'][:,:,k])) # Nx1
+        if verbose > 1: print('    - log(alpha)\n')
+        log_alpha[:,k] = np.log(theta['pi'][k] + log_gauss_pdf(x, theta['xk'][:,k], theta['Gammaks'][:,:,k])) # Nx1
 
     # Normalization
-    log_α -= log_sum_exp(log_α,2) # NxK
+    log_alpha -= log_sum_exp(log_alpha,2) # NxK
 
     # Results
-    α = np.exp(log_α)# NxK
+    alpha = np.exp(log_alpha)# NxK
     y_exp = np.reshape(np.sum(
-        np.reshape(α, (1,N,K), order='F') * proj, axis = 2),
+        np.reshape(alpha, (1,N,K), order='F') * proj, axis = 2),
         (D,N), order='F') # LxN
 
     posterior_means = y_exp
-    posterior_GMMs_weight = α
+    posterior_GMMs_weight = alpha
 
     return posterior_means, posterior_GMMs_weight
 
